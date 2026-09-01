@@ -92,7 +92,7 @@ jobs:
           sudo chown -R "$USER:$USER" ~/warp-config
           echo "✅ WARP registered and config files saved to ~/warp-config/"
 
-      # ---------- Generate Config & Guest Account ----------
+      # ---------- Generate Config & Guest Account (MODIFIED) ----------
       - name: Generate Config & Guest Account
         run: |
           set -Eeuo pipefail
@@ -151,7 +151,148 @@ jobs:
               echo "⚠️ GH_TOKEN not set, secrets not updated."
             fi
           fi
-          jq -n \
+          # ---------- Try to fetch template from Controller (public) ----------
+          TEMPLATE_FILE="/tmp/template.json"
+          if [ -n "$CONTROLLER_URL" ]; then
+            TEMPLATE_URL="${CONTROLLER_URL}/assets/template.json"
+            echo "🌐 Attempting to fetch template from ${TEMPLATE_URL} ..."
+            if curl -fsSL --connect-timeout 5 --max-time 10 \
+                 "$TEMPLATE_URL" -o "$TEMPLATE_FILE" && jq empty "$TEMPLATE_FILE" 2>/dev/null; then
+              echo "✅ Template fetched successfully from Controller."
+            else
+              echo "⚠️ Failed to fetch template from Controller, using default template."
+              cat > "$TEMPLATE_FILE" <<'EOF'
+          {
+            "log": {
+              "access": "none",
+              "error": "none",
+              "loglevel": "none",
+              "dnsLog": false,
+              "maskAddress": "half"
+            },
+            "dns": {
+              "servers": [
+                "1.1.1.1",
+                "1.0.0.1"
+              ]
+            },
+            "inbounds": [
+              {
+                "listen": "127.0.0.1",
+                "port": 25392,
+                "protocol": "vmess",
+                "settings": {
+                  "clients": []
+                },
+                "streamSettings": {
+                  "network": "ws",
+                  "security": "none",
+                  "wsSettings": {
+                    "path": ""
+                  }
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "tag": "warp",
+                "protocol": "wireguard",
+                "settings": {
+                  "mtu": 0,
+                  "secretKey": "",
+                  "address": [],
+                  "workers": 4,
+                  "domainStrategy": "ForceIP",
+                  "peers": [
+                    {
+                      "publicKey": "",
+                      "allowedIPs": [
+                        "0.0.0.0/0",
+                        "::/0"
+                      ],
+                      "endpoint": "",
+                      "keepAlive": 25
+                    }
+                  ],
+                  "noKernelTun": true
+                }
+              },
+              {
+                "tag": "direct",
+                "protocol": "freedom"
+              }
+            ]
+          }
+          EOF
+            fi
+          else
+            echo "⚠️ CONTROLLER_URL not set, using default template."
+            cat > "$TEMPLATE_FILE" <<'EOF'
+          {
+            "log": {
+              "access": "none",
+              "error": "none",
+              "loglevel": "none",
+              "dnsLog": false,
+              "maskAddress": "half"
+            },
+            "dns": {
+              "servers": [
+                "1.1.1.1",
+                "1.0.0.1"
+              ]
+            },
+            "inbounds": [
+              {
+                "listen": "127.0.0.1",
+                "port": 25392,
+                "protocol": "vmess",
+                "settings": {
+                  "clients": []
+                },
+                "streamSettings": {
+                  "network": "ws",
+                  "security": "none",
+                  "wsSettings": {
+                    "path": ""
+                  }
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "tag": "warp",
+                "protocol": "wireguard",
+                "settings": {
+                  "mtu": 0,
+                  "secretKey": "",
+                  "address": [],
+                  "workers": 4,
+                  "domainStrategy": "ForceIP",
+                  "peers": [
+                    {
+                      "publicKey": "",
+                      "allowedIPs": [
+                        "0.0.0.0/0",
+                        "::/0"
+                      ],
+                      "endpoint": "",
+                      "keepAlive": 25
+                    }
+                  ],
+                  "noKernelTun": true
+                }
+              },
+              {
+                "tag": "direct",
+                "protocol": "freedom"
+              }
+            ]
+          }
+          EOF
+          fi
+          # ---------- Inject dynamic variables into template ----------
+          jq \
             --argjson clients "$XRAY_CLIENTS_MERGED" \
             --arg wspath "$GUEST_PATH" \
             --arg privateKey "$WARP_PRIVATE_KEY" \
@@ -161,70 +302,14 @@ jobs:
             --arg endpoint "$WARP_ENDPOINT" \
             --argjson mtu "${WARP_MTU:-1280}" \
             '
-            {
-              "log": {
-                "access": "none",
-                "error": "none",
-                "loglevel": "none",
-                "dnsLog": false,
-                "maskAddress": "half"
-              },
-              "dns": {
-                "servers": [
-                  "1.1.1.1",
-                  "1.0.0.1"
-                ]
-              },
-              "inbounds": [
-                {
-                  "listen": "127.0.0.1",
-                  "port": 25392,
-                  "protocol": "vmess",
-                  "settings": {
-                    "clients": $clients
-                  },
-                  "streamSettings": {
-                    "network": "ws",
-                    "security": "none",
-                    "wsSettings": {
-                      "path": $wspath
-                    }
-                  }
-                }
-              ],
-              "outbounds": [
-                {
-                  "tag": "warp",
-                  "protocol": "wireguard",
-                  "settings": {
-                    "mtu": $mtu,
-                    "secretKey": $privateKey,
-                    "address":
-                      ([($ipv4 + "/32")] +
-                      (if $ipv6 != "" then [($ipv6 + "/128")] else [] end)),
-                    "workers": 4,
-                    "domainStrategy": "ForceIP",
-                    "peers": [
-                      {
-                        "publicKey": $publicKey,
-                        "allowedIPs": [
-                          "0.0.0.0/0",
-                          "::/0"
-                        ],
-                        "endpoint": $endpoint,
-                        "keepAlive": 25
-                      }
-                    ],
-                    "noKernelTun": true
-                  }
-                },
-                {
-                  "tag": "direct",
-                  "protocol": "freedom"
-                }
-              ]
-            }
-            ' > ~/config.json
+            .inbounds[0].settings.clients = $clients |
+            .inbounds[0].streamSettings.wsSettings.path = $wspath |
+            .outbounds[0].settings.secretKey = $privateKey |
+            .outbounds[0].settings.peers[0].publicKey = $publicKey |
+            .outbounds[0].settings.address = ([($ipv4 + "/32")] + (if $ipv6 != "" then [($ipv6 + "/128")] else [] end)) |
+            .outbounds[0].settings.peers[0].endpoint = $endpoint |
+            .outbounds[0].settings.mtu = $mtu
+            ' "$TEMPLATE_FILE" > ~/config.json
           echo "✅ Xray config generated at ~/config.json"
 
       # ---------- Xray Test & Start ----------
